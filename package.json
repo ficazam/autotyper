@@ -1,14 +1,20 @@
 {
   "name": "@ficazam31/autotyper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "bin": {
     "autotyper": "./dist/autotyper.js"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "bun build src/autotyper.ts --outdir dist --target node",
     "prepublishOnly": "bun run build"
   },
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }
