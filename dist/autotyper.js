@@ -77,6 +77,8 @@ var TS_RESERVED = new Set([
 ]);
 
 // core/utils.ts
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 var toPascalCase = (x) => x.split(/[-_\s]+/).filter(Boolean).map((w) => w[0]?.toUpperCase() + w.slice(1)).join("");
 var toCamel = (x) => {
   const p = toPascalCase(x);
@@ -87,6 +89,13 @@ var sanitizeTypeName = (raw) => {
   const cleaned = base.replace(/[^A-Za-z0-9_$]/g, "");
   const safe = cleaned || "Type";
   return TS_RESERVED.has(safe) ? `${safe}Type` : safe;
+};
+var toKebabCase = (x) => {
+  return x.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/[_\s]+/g, "-").toLowerCase();
+};
+var writeOutFile = async (path, content) => {
+  await mkdir(resolve(path, ".."), { recursive: true });
+  await writeFile(path, content, "utf8");
 };
 var sanitizePropName = (raw) => {
   const camel = toCamel(raw.trim());
@@ -347,32 +356,113 @@ var buildOutput = (dsl, options) => {
 };
 
 // src/autotyper.ts
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as resolve2 } from "node:path";
+var completionBash = () => {
+  return `
+_autotyper() {
+  local cur prev opts
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+
+  opts="--help -h --version -v --mode --strict --optional-by-default --no-zod --no-interface --no-example --type --zod --interface --outdir --dry-run completion"
+
+  if [[ "\${prev}" == "--mode" ]]; then
+    COMPREPLY=( $(compgen -W "type interface zod all json" -- "\${cur}") )
+    return 0
+  fi
+
+  if [[ "\${prev}" == "--outdir" ]]; then
+    COMPREPLY=( $(compgen -d -- "\${cur}") )
+    return 0
+  fi
+
+  COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
+  return 0
+}
+complete -F _autotyper autotyper
+`.trimStart();
+};
+var completionZsh = () => {
+  return `
+#compdef autotyper
+_arguments \\
+  '--help[Show help]' \\
+  '--version[Show version]' \\
+  '--mode[Output mode]:mode:(type interface zod all json)' \\
+  '--strict[Zod strict mode]' \\
+  '--optional-by-default[Optional fields unless !]' \\
+  '--no-zod[Disable zod output]' \\
+  '--no-interface[Disable interface output]' \\
+  '--no-example[Disable example output]' \\
+  '--type[Write ./core/<name>.type.ts]' \\
+  '--zod[Write ./core/<name>.zod.ts]' \\
+  '--interface[Write ./core/<name>.interface.ts]' \\
+  '--outdir[Output directory]:dir:_files -/' \\
+  '--dry-run[Show what would be written]' \\
+  '1: :_guard "^-*" "dsl or subcommand"' \\
+  '*: :_files'
+`.trimStart();
+};
+var completionFish = () => {
+  return `
+complete -c autotyper -l help -s h -d "Show help"
+complete -c autotyper -l version -s v -d "Show version"
+complete -c autotyper -l mode -d "Output mode" -xa "type interface zod all json"
+complete -c autotyper -l strict -d "Zod strict mode"
+complete -c autotyper -l optional-by-default -d "Optional fields unless !"
+complete -c autotyper -l no-zod -d "Disable zod output"
+complete -c autotyper -l no-interface -d "Disable interface output"
+complete -c autotyper -l no-example -d "Disable example output"
+complete -c autotyper -l type -d "Write ./core/<name>.type.ts"
+complete -c autotyper -l zod -d "Write ./core/<name>.zod.ts"
+complete -c autotyper -l interface -d "Write ./core/<name>.interface.ts"
+complete -c autotyper -l outdir -d "Output directory" -r
+complete -c autotyper -l dry-run -d "Show what would be written"
+complete -c autotyper -f -a "completion" -d "Print shell completion"
+`.trimStart();
+};
 function parseArgs(argv) {
   const args = argv.slice(2);
   const flags = new Map;
   const positionals = [];
+  const setFlag = (k, v = true) => flags.set(k, v);
   for (let i = 0;i < args.length; i++) {
     const a = args[i];
     if (a.startsWith("--")) {
       const [k, v] = a.split("=", 2);
       if (v !== undefined)
-        flags.set(k, v);
+        setFlag(k, v);
       else {
         const next = args[i + 1];
-        if (next && !next.startsWith("--")) {
-          flags.set(k, next);
+        if (next && !next.startsWith("-")) {
+          setFlag(k, next);
           i++;
         } else {
-          flags.set(k, true);
+          setFlag(k, true);
         }
       }
-    } else {
-      positionals.push(a);
+      continue;
     }
+    if (a.startsWith("-") && a.length > 1) {
+      const shorts = a.slice(1).split("");
+      for (const s of shorts) {
+        if (s === "h")
+          setFlag("--help", true);
+        else if (s === "v")
+          setFlag("--version", true);
+        else
+          setFlag(`-${s}`, true);
+      }
+      continue;
+    }
+    positionals.push(a);
   }
   return { flags, positionals };
 }
-async function readStdin() {
+var readStdin = async () => {
   if (process.stdin.isTTY)
     return "";
   const chunks = [];
@@ -380,14 +470,18 @@ async function readStdin() {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString("utf8").trim();
-}
-function help() {
+};
+var help = () => {
   return `
 autotyper — generate TS (and Zod) from a tiny DSL
 
 Usage:
   autotyper "User email:s password:s isAdmin?:b createdAt:d tags:s[]"
   echo "User email:s isAdmin?:b" | autotyper
+  autotyper completion <bash|zsh|fish>
+
+Subcommands:
+  completion <bash|zsh|fish>             Print shell completion script
 
 Options:
   --mode <type|interface|zod|all|json>   (default: type)
@@ -396,17 +490,36 @@ Options:
   --no-zod                               Disable zod output (only affects json/all)
   --no-interface                         Disable interface output (only affects json/all)
   --no-example                           Disable example output (only affects json/all)
+  --type                                 Write ./core/<type-name>.type.ts
+  --interface                            Write ./core/<type-name>.interface.ts
+  --zod                                  Write ./core/<type-name>.zod.ts
+  --outdir <path>                        Output directory (default: ./core)
+  --dry-run                              Print what would be written without writing
+  --version, -v                          Print version
+  --help, -h                             Show this help
 
 Examples:
   autotyper --mode all "User email:s isAdmin?:b"
   autotyper --mode json --strict "User email:s createdAt:d"
+
+Shell completion:
+  autotyper completion bash > ~/.bash_completion.d/autotyper
+  autotyper completion zsh  > ~/.zsh/completions/_autotyper
+  autotyper completion fish > ~/.config/fish/completions/autotyper.fish
 `.trim();
-}
-function fail(msg) {
+};
+var readPackageVersion = async () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const pkgPath = resolve2(here, "../package.json");
+  const raw = await readFile(pkgPath, "utf8");
+  const pkg = JSON.parse(raw);
+  return pkg.version ?? "0.0.0";
+};
+var fail = (msg) => {
   console.error(msg);
   process.exit(1);
-}
-function pickMode(out, mode) {
+};
+var pickMode = (out, mode) => {
   switch (mode) {
     case "type":
       return String(out.type);
@@ -436,11 +549,30 @@ function pickMode(out, mode) {
 `);
     }
   }
-}
-async function main() {
+};
+var main = async () => {
   const { flags, positionals } = parseArgs(process.argv);
+  if (positionals[0] === "completion") {
+    const shell = positionals[1];
+    if (shell === "bash")
+      console.log(completionBash());
+    else if (shell === "zsh")
+      console.log(completionZsh());
+    else if (shell === "fish")
+      console.log(completionFish());
+    else {
+      console.error("Usage: autotyper completion <bash|zsh|fish>");
+      process.exit(1);
+    }
+    return;
+  }
   if (flags.has("--help") || flags.has("-h")) {
     console.log(help());
+    return;
+  }
+  if (flags.has("--version") || flags.has("-v")) {
+    const version = await readPackageVersion();
+    console.log(`autotyper v${version}`);
     return;
   }
   const mode = flags.get("--mode") ?? "type";
@@ -467,6 +599,51 @@ Error: No DSL provided.`);
   };
   try {
     const out = buildOutput(dsl, options);
+    const emitType = Boolean(flags.get("--type"));
+    const emitZod = Boolean(flags.get("--zod"));
+    const emitInterface = Boolean(flags.get("--interface"));
+    const outdir = String(flags.get("--outdir") ?? "./core");
+    const dryRun = Boolean(flags.get("--dry-run"));
+    const typeName = String(out.typeName ?? "");
+    const base = toKebabCase(typeName || "type");
+    const emitted = [];
+    if (emitType) {
+      const p = resolve2(outdir, `${base}.type.ts`);
+      const content = String(out.type);
+      if (!dryRun)
+        await writeOutFile(p, content.endsWith(`
+`) ? content : content + `
+`);
+      emitted.push(p);
+    }
+    if (emitInterface) {
+      const p = resolve2(outdir, `${base}.interface.ts`);
+      const content = String(out.interface ?? "");
+      if (!content)
+        throw new Error("No interface output (did you disable it?)");
+      if (!dryRun)
+        await writeOutFile(p, content.endsWith(`
+`) ? content : content + `
+`);
+      emitted.push(p);
+    }
+    if (emitZod) {
+      const p = resolve2(outdir, `${base}.zod.ts`);
+      const content = String(out.zod ?? "");
+      if (!content)
+        throw new Error("No zod output (did you disable it?)");
+      if (!dryRun)
+        await writeOutFile(p, content.endsWith(`
+`) ? content : content + `
+`);
+      emitted.push(p);
+    }
+    if (emitted.length > 0) {
+      for (const p of emitted)
+        console.log(dryRun ? `[dry-run] ${p}` : `Wrote ${p}`);
+      if (!flags.has("--mode"))
+        return;
+    }
     const text = pickMode(out, mode);
     if (!text) {
       fail(`Mode "${mode}" produced empty output. (Maybe disabled with --no-zod/--no-interface?)`);
@@ -483,5 +660,5 @@ Error: No DSL provided.`);
       console.error(`At token[${err.index}]: ${err.token}`);
     process.exit(1);
   }
-}
+};
 main();

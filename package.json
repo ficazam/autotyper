@@ -12,9 +12,13 @@
   ],
   "scripts": {
     "build": "bun build src/autotyper.ts --outdir dist --target node",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build",
+    "postinstall": "node scripts/postinstall.cjs"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@types/node": "^25.0.3"
   }
 }

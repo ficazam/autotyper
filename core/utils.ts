@@ -1,4 +1,6 @@
 import { GenOptions, Prop, DSLError, TS_RESERVED } from "./types";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 export const toPascalCase = (x: string): string =>
   x
@@ -24,6 +26,18 @@ export const sanitizeTypeName = (raw: string) => {
   const cleaned = base.replace(/[^A-Za-z0-9_$]/g, "");
   const safe = cleaned || "Type";
   return TS_RESERVED.has(safe) ? `${safe}Type` : safe;
+};
+
+export const toKebabCase = (x: string): string => {
+  return x
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/[_\s]+/g, "-")
+    .toLowerCase();
+};
+
+export const writeOutFile = async (path: string, content: string) => {
+  await mkdir(resolve(path, ".."), { recursive: true });
+  await writeFile(path, content, "utf8");
 };
 
 export const sanitizePropName = (raw: string) => {
@@ -124,7 +138,6 @@ export const parseDSL = (
       hint: 'Example: "User email:s password:s isAdmin?:b createdAt:d tags:s[]"',
     });
 
-  // OLD STYLE: type:user-email:s/password:s/name:s/isAdmin:b:o
   if (dsl.startsWith("type:")) {
     const [head, rest] = dsl.split("-", 2);
     if (!rest)
@@ -161,7 +174,6 @@ export const parseDSL = (
     return { typeName, props };
   }
 
-  // NEW STYLE (also tolerates commas/newlines)
   const normalized = dsl
     .replace(/\r\n/g, "\n")
     .replace(/[,\n]/g, " ")

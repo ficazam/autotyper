@@ -1,3 +1,9 @@
+<!-- Badges -->
+![npm](https://img.shields.io/npm/v/@ficazam31/autotyper)
+![downloads](https://img.shields.io/npm/dm/@ficazam31/autotyper)
+![license](https://img.shields.io/npm/l/@ficazam31/autotyper)
+![node](https://img.shields.io/node/v/@ficazam31/autotyper)
+
 # autotyper
 
 **autotyper** is a tiny CLI that turns a fast, human-friendly DSL into clean TypeScript types — with optional `interface`, `zod` schema, and example object generation.
